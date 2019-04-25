@@ -1,0 +1,1429 @@
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: True
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+    DependsOn:
+      - UserPool
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - HEAD
+              - GET
+              - PUT
+              - POST
+              - DELETE
+            AllowedOrigins:
+              - '*'
+            ExposedHeaders:
+              - x-amz-server-side-encryption
+              - x-amz-request-id
+              - x-amz-id-2
+            MaxAge: 3000
+  AppSyncAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to allow users to access AppSync and S3
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - appsync:GraphQL
+            Resource: [!Join ["", [!GetAtt AppSyncApi.Arn, "/types/*/fields/*"]], !Join ["", ["arn:aws:appsync:eu-central-1:*:apis/", !GetAtt AppSyncApi.ApiId]]]
+    DependsOn:
+      - ImageBucket
+      - AppSyncApi
+  S3AccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to allow users to access AppSync and S3
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: [!Join ["", [!GetAtt ImageBucket.Arn, "/*"]]]
+    DependsOn:
+      - ImageBucket
+      - AppSyncApi
+  AuthCognitoAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to grant basic rights to unauthenticated users
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - mobileanalytics:PutEvents
+              - cognito-sync:*
+              - cognito-identity:*
+            Resource: [ "*" ]
+  UnauthCognitoAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to grant basic rights to unauthenticated users
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - mobileanalytics:PutEvents
+              - cognito-sync:*
+            Resource: [ "*" ]
+  UnauthenticatedAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - Ref: AppSyncAccessPolicy
+        - Ref: S3AccessPolicy
+        - Ref: UnauthCognitoAccessPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated:
+                - cognito-identity.amazonaws.com
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": unauthenticated
+    DependsOn:
+      - S3AccessPolicy
+      - AppSyncAccessPolicy
+      - IdentityPool
+  AuthenticatedAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - Ref: AppSyncAccessPolicy
+        - Ref: S3AccessPolicy
+        - Ref: AuthCognitoAccessPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated:
+                - cognito-identity.amazonaws.com
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+    DependsOn:
+      - S3AccessPolicy
+      - AppSyncAccessPolicy
+      - IdentityPool
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      AllowUnauthenticatedIdentities: True
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+    DependsOn:
+      - UserPool
+      - UserPoolClient
+  IdentityPoolRoles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt AuthenticatedAccessRole.Arn
+        unauthenticated: !GetAtt UnauthenticatedAccessRole.Arn
+    DependsOn:
+      - AuthenticatedAccessRole
+      - UnauthenticatedAccessRole
+      - IdentityPool
+  AppSyncApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: BuildYourResume
+      AuthenticationType: AWS_IAM
+  AppSyncSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      Definition: |
+        type Resume {
+          id: ID!
+          first_name: String!
+          last_name: String!
+          residence: String!
+          email: AWSEmail!
+          photo: S3Object!
+          study: String!
+          academic_year: String!
+          internship: Boolean!
+          studentjob: Boolean!
+          job: Boolean!
+          session: Session!
+          owner: String!
+          rtt: [ResumeTagTile]
+        }
+
+        type ResumeTagTile {
+          id: ID!
+          resume: Resume!
+          tag: Tag!
+          tile: Tile!
+        }
+
+        type Session {
+          id: ID!
+          name: String!
+          location: String!
+          date: AWSDate!
+          ended: Boolean!
+          owner: String!
+        }
+
+        type Tag {
+          id: ID!
+          name: String!
+          description: String!
+          order: Int!
+          removed: Boolean!
+          owner: String!
+          tt: [TagTile]
+        }
+
+        type TagTile {
+          id: ID!
+          tag: Tag!
+          tile: Tile!
+        }
+
+        type Tile {
+          id: ID!
+          name: String!
+          removed: Boolean!
+          icon: S3Object!
+          tt: [TagTile]
+          owner: String!
+        }
+
+        type Mutation {
+            addResume(first_name: String!, last_name: String!, residence: String!, email: AWSEmail!, photo: S3ObjectInput!, study: String!, academic_year: String!, internship: Boolean!, studentjob: Boolean!, job: Boolean!, sessionID: ID!, owner: String!): Resume
+            addResumeTagTile(resumeID: ID!, tagID: ID!, tileID: ID!): ResumeTagTile
+
+            addTag(name: String!, description: String, order: Int!, owner: String!): Tag
+            updateTag(id: ID!, name: String, description: String, order: Int): Tag
+            deleteTag(id: ID!): Tag
+
+            addTile(name: String!, icon: S3ObjectInput!, owner: String!): Tile
+            updateTile(id: ID!, name: String): Tile
+            deleteTile(id: ID!): Tile
+
+            addTagTile(tagID: ID!, tileID: ID!): TagTile
+            deleteTagTile(id: ID!): TagTile
+
+            addSession(name: String!, location: String!, date: AWSDate!, owner: String!): Session
+            updateSession(id: ID!, name: String, location: String, date: AWSDate): Session
+            endSession(id: ID!): Session
+        }
+
+        type Query {
+            getSession(id: ID!): Session
+            getSessions(owner: String!): [Session]
+
+            getResume(id: ID!): Resume
+            getResumes(owner: String!, sessionID: ID, internship: Boolean, studentjob: Boolean, job: Boolean): [Resume]
+
+            getTag(id: ID!): Tag
+            getTags(owner: String!): [Tag]
+
+            getTile(id: ID!): Tile
+            getTiles(owner: String!): [Tile]
+        }
+
+        type Subscription {
+            addedResume(owner: String!): Resume
+            @aws_subscribe(mutations: ["addResume"])
+            addedSession(owner: String!): Session
+            @aws_subscribe(mutations: ["addSession"])
+            updatedSession(owner: String!): Session
+            @aws_subscribe(mutations: ["updateSession"])
+            endedSession(owner: String!): Session
+            @aws_subscribe(mutations: ["endSession"])
+            addedTile(owner: String!): Tile
+            @aws_subscribe(mutations: ["addTile"])
+            updatedTile(owner: String!): Tile
+            @aws_subscribe(mutations: ["updateTile"])
+            deletedTile(owner: String!): Tile
+            @aws_subscribe(mutations: ["deleteTile"])
+            addedTag(owner: String!): Tag
+            @aws_subscribe(mutations: ["addTag"])
+            updatedTag(owner: String!): Tag
+            @aws_subscribe(mutations: ["updateTag"])
+            deletedTag(owner: String!): Tag
+            @aws_subscribe(mutations: ["deleteTag"])
+            addedTagTile(tileID: ID, tagID: ID): TagTile
+            @aws_subscribe(mutations: ["addTagTile"])
+            deletedTagTile(id: ID): TagTile
+            @aws_subscribe(mutations: ["deleteTagTile"])
+        }
+
+        type S3Object {
+        	bucket: String!
+        	region: String!
+        	key: String!
+        }
+
+        input S3ObjectInput {
+        	bucket: String!
+        	region: String!
+        	localUri: String
+        	key: String
+        	mimeType: String
+        }
+
+        schema {
+        	query: Query
+        	mutation: Mutation
+            subscription: Subscription
+        }
+    DependsOn:
+      - AppSyncApi
+  ResumeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  ResumeTagTileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  SessionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  TagTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  TileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  TagTileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  AppSyncIAMPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to allow AppSync to access DynamoDB
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:Scan
+            Resource: [!Join ["", [!GetAtt ResumeTable.Arn, "*"]], !Join ["", [!GetAtt ResumeTagTileTable.Arn, "*"]], !Join ["", [!GetAtt SessionTable.Arn, "*"]], !Join ["", [!GetAtt TagTable.Arn, "*"]], !Join ["", [!GetAtt TileTable.Arn, "*"]], !Join ["", [!GetAtt TagTileTable.Arn, "*"]]]
+  AppSyncIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - Ref: AppSyncIAMPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+  ResumeDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: ResumeTable
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DynamoDBConfig:
+        TableName: !Ref ResumeTable
+        AwsRegion: eu-central-1
+      ServiceRoleArn: !GetAtt AppSyncIAMRole.Arn
+    DependsOn:
+      - AppSyncIAMRole
+      - ResumeTable
+  ResumeTagTileDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: ResumeTagTileTable
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DynamoDBConfig:
+        TableName: !Ref ResumeTagTileTable
+        AwsRegion: eu-central-1
+      ServiceRoleArn: !GetAtt AppSyncIAMRole.Arn
+    DependsOn:
+      - AppSyncIAMRole
+      - ResumeTagTileTable
+  SessionDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: SessionTable
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DynamoDBConfig:
+        TableName: !Ref SessionTable
+        AwsRegion: eu-central-1
+      ServiceRoleArn: !GetAtt AppSyncIAMRole.Arn
+    DependsOn:
+      - AppSyncIAMRole
+      - SessionTable
+  TagDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: TagTable
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DynamoDBConfig:
+        TableName: !Ref TagTable
+        AwsRegion: eu-central-1
+      ServiceRoleArn: !GetAtt AppSyncIAMRole.Arn
+    DependsOn:
+      - AppSyncIAMRole
+      - TagTable
+  TileDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: TileTable
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DynamoDBConfig:
+        TableName: !Ref TileTable
+        AwsRegion: eu-central-1
+      ServiceRoleArn: !GetAtt AppSyncIAMRole.Arn
+    DependsOn:
+      - AppSyncIAMRole
+      - TileTable
+  TagTileDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: TagTileTable
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DynamoDBConfig:
+        TableName: !Ref TagTileTable
+        AwsRegion: eu-central-1
+      ServiceRoleArn: !GetAtt AppSyncIAMRole.Arn
+    DependsOn:
+      - AppSyncIAMRole
+      - TagTileTable
+  NoneDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: None
+      Type: NONE
+      ApiId: !GetAtt AppSyncApi.ApiId
+  ResumeSessionResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Resume
+      FieldName: session
+      DataSourceName: !GetAtt SessionDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation" : "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.source.sessionID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - AppSyncApi
+      - SessionDataSource
+  ResumeRTTResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Resume
+      FieldName: rtt
+      DataSourceName: !GetAtt ResumeTagTileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+            "expression": "resumeID = :resumeID",
+            "expressionValues": {
+              ":resumeID": $util.dynamodb.toDynamoDBJson($ctx.source.id)
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - AppSyncApi
+      - ResumeTagTileDataSource
+  ResumePhotoResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Resume
+      DataSourceName: !GetAtt NoneDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: photo
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "payload": {}
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($util.dynamodb.fromS3ObjectJson($ctx.source.photo))
+    DependsOn:
+      - NoneDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  ResumeTagTileResumeResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: ResumeTagTile
+      FieldName: resume
+      DataSourceName: !GetAtt ResumeDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation" : "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.source.resumeID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - AppSyncApi
+      - ResumeDataSource
+  ResumeTagTileTagResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: ResumeTagTile
+      FieldName: tag
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation" : "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.source.tagID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - AppSyncApi
+      - TagDataSource
+  ResumeTagTileTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: ResumeTagTile
+      FieldName: tile
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation" : "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.source.tileID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - AppSyncApi
+      - TileDataSource
+  TagTTResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Tag
+      FieldName: tt
+      DataSourceName: !GetAtt TagTileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+            "expression": "tagID = :tagID",
+            "expressionValues": {
+              ":tagID": $util.dynamodb.toDynamoDBJson($ctx.source.id)
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - AppSyncApi
+      - TagTileDataSource
+  TagTileTagResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: TagTile
+      FieldName: tag
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation" : "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.source.tagID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - AppSyncApi
+      - TagDataSource
+  TagTileTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: TagTile
+      FieldName: tile
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation" : "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.source.tileID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - AppSyncApi
+      - TileDataSource
+  TileTTResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Tile
+      FieldName: tt
+      DataSourceName: !GetAtt TagTileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      RequestMappingTemplate: |
+        {
+          "version" : "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+            "expression": "tileID = :tileID",
+            "expressionValues": {
+              ":tileID": $util.dynamodb.toDynamoDBJson($ctx.source.id)
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - AppSyncApi
+      - TagTileDataSource
+  TileIconResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Tile
+      DataSourceName: !GetAtt NoneDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: icon
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "payload": {}
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($util.dynamodb.fromS3ObjectJson($ctx.source.icon))
+    DependsOn:
+      - NoneDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetSessionResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt SessionDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getSession
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "GetItem",
+          "key": {
+              "id": $util.dynamodb.toDynamoDBJson($ctx.args.id),
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - SessionDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetSessionsResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt SessionDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getSessions
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+            "expression" : "#owner = :owner",
+            "expressionNames" : {
+              "#owner": "owner"
+            },
+            "expressionValues" : {
+              ":owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner)
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - SessionDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetResumeResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt ResumeDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getResume
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "GetItem",
+          "key": {
+              "id": $util.dynamodb.toDynamoDBJson($ctx.args.id),
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - ResumeDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetResumesResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt ResumeDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getResumes
+      RequestMappingTemplate: |
+        #set( $expNames = {})
+        #set( $expValues= {})
+        #set( $expSet= {})
+        $!{expSet.put("#owner", ":owner")}
+        $!{expNames.put("#owner", "owner")}
+        $!{expValues.put(":owner", {"S":"${ctx.args.owner}"})}
+        #if (!$util.isNullOrEmpty($ctx.args.sessionID))
+          $!{expSet.put("#sessionID", ":sessionID")}
+          $!{expNames.put("#sessionID", "sessionID")}
+          $!{expValues.put(":sessionID", {"S":"${ctx.args.sessionID}"})}
+        #end
+        #if (!$util.isNullOrEmpty($ctx.args.internship))
+          $!{expSet.put("#internship", ":internship")}
+          $!{expNames.put("#internship", "internship")}
+          $!{expValues.put(":internship", {"BOOL": $ctx.args.internship})}
+        #end
+        #if (!$util.isNullOrEmpty($ctx.args.studentjob))
+          $!{expSet.put("#studentjob", ":studentjob")}
+          $!{expNames.put("#studentjob", "studentjob")}
+          $!{expValues.put(":studentjob", {"BOOL": $ctx.args.studentjob})}
+        #end
+        #if (!$util.isNullOrEmpty($ctx.args.job))
+          $!{expSet.put("#job", ":job")}
+          $!{expNames.put("#job", "job")}
+          $!{expValues.put(":job", {"BOOL": $ctx.args.job})}
+        #end
+        #set ($expression = "")
+        #foreach ($entry in $expSet.entrySet())
+          #set ($expression = "${expression} ${entry.key} = ${entry.value}")
+          #if ($foreach.hasNext)
+            #set ($expression = "${expression} AND")
+          #end
+        #end
+        {
+          "version": "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+            "expression" : "${expression}",
+            "expressionNames" : $util.toJson($expNames),
+            "expressionValues" : $util.toJson($expValues)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - ResumeDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetTagResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getTag
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "GetItem",
+          "key": {
+              "id": $util.dynamodb.toDynamoDBJson($ctx.args.id),
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TagDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetTagsResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getTags
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+              "expression" : "#owner = :owner AND #removed = :removed",
+              "expressionNames" : {
+                "#owner": "owner",
+                "#removed": "removed"
+              },
+              "expressionValues" : {
+                ":owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner),
+                ":removed": $util.dynamodb.toDynamoDBJson(false)
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - TagDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "GetItem",
+          "key": {
+              "id": $util.dynamodb.toDynamoDBJson($ctx.args.id),
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  GetTilesResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Query
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: getTiles
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "Scan",
+          "filter" : {
+            "expression" : "#owner = :owner AND #removed = :removed",
+            "expressionNames" : {
+              "#owner": "owner",
+              "#removed": "removed"
+            },
+            "expressionValues" : {
+              ":owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner),
+              ":removed": $util.dynamodb.toDynamoDBJson(false)
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result.items)
+    DependsOn:
+      - TileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  AddResumeResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt ResumeDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: addResume
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId())
+          },
+          "attributeValues": {
+            "first_name": $util.dynamodb.toDynamoDBJson($ctx.args.first_name),
+            "last_name": $util.dynamodb.toDynamoDBJson($ctx.args.last_name),
+            "residence": $util.dynamodb.toDynamoDBJson($ctx.args.residence),
+            "email": $util.dynamodb.toDynamoDBJson($ctx.args.email),
+            "photo": $util.dynamodb.toS3ObjectJson($ctx.args.photo.key, $ctx.args.photo.bucket, $ctx.args.photo.region),
+            "study": $util.dynamodb.toDynamoDBJson($ctx.args.study),
+            "academic_year": $util.dynamodb.toDynamoDBJson($ctx.args.academic_year),
+            "internship": $util.dynamodb.toDynamoDBJson($ctx.args.internship),
+            "studentjob": $util.dynamodb.toDynamoDBJson($ctx.args.studentjob),
+            "job": $util.dynamodb.toDynamoDBJson($ctx.args.job),
+            "sessionID": $util.dynamodb.toDynamoDBJson($ctx.args.sessionID),
+            "owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - ResumeDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  AddResumeTagTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt ResumeTagTileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: addResumeTagTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId())
+          },
+          "attributeValues": {
+            "resumeID": $util.dynamodb.toDynamoDBJson($ctx.args.resumeID),
+            "tagID": $util.dynamodb.toDynamoDBJson($ctx.args.tagID),
+            "tileID": $util.dynamodb.toDynamoDBJson($ctx.args.tileID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - ResumeTagTileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  AddTagResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: addTag
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId())
+          },
+          "attributeValues": {
+            "name": $util.dynamodb.toDynamoDBJson($ctx.args.name),
+            #if ($ctx.args.containsKey("description"))
+            "description": $util.dynamodb.toDynamoDBJson($ctx.args.description),
+            #end
+            "order": $util.dynamodb.toDynamoDBJson($ctx.args.order),
+            "owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner),
+            "removed": $util.dynamodb.toDynamoDBJson(false)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TagDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  UpdateTagResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: updateTag
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "UpdateItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          },
+          #set( $expNames  = {} )
+          #set( $expValues = {} )
+          #set( $expSet = {} )
+          #foreach( $entry in $ctx.args.entrySet() )
+            #if( $entry.key != "id" && !$util.isNullOrEmpty($entry.value))
+              $!{expSet.put("#${entry.key}", ":${entry.key}")}
+              $!{expNames.put("#${entry.key}", "$entry.key")}
+              $!{expValues.put(":${entry.key}", { "S" : "${entry.value}" })}
+            #end
+          #end
+          #set( $expression = "" )
+          #if( !${expSet.isEmpty()} )
+            #set( $expression = "SET" )
+            #foreach( $entry in $expSet.entrySet() )
+              #set( $expression = "${expression} ${entry.key} = ${entry.value}" )
+              #if ( $foreach.hasNext )
+                #set( $expression = "${expression}," )
+              #end
+            #end
+          #end
+          "update" : {
+            "expression" : "${expression}"
+            #if( !${expNames.isEmpty()} )
+                ,"expressionNames" : $util.toJson($expNames)
+            #end
+            #if( !${expValues.isEmpty()} )
+                ,"expressionValues" : $util.toJson($expValues)
+            #end
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TagDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  DeleteTagResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TagDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: deleteTag
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "UpdateItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          },
+          "update" : {
+            "expression" : "SET #removed = :removed",
+            "expressionNames" : {
+              "#removed": "removed"
+            },
+            "expressionValues": {
+              ":removed": { "BOOL" : true}
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TagDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  AddTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: addTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId())
+          },
+          "attributeValues": {
+            "name": $util.dynamodb.toDynamoDBJson($ctx.args.name),
+            "icon": $util.dynamodb.toS3ObjectJson($ctx.args.icon.key, $ctx.args.icon.bucket, $ctx.args.icon.region),
+            "owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner),
+            "removed": $util.dynamodb.toDynamoDBJson(false)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  UpdateTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: updateTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "UpdateItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          },
+          #set( $expNames  = {} )
+          #set( $expValues = {} )
+          #set( $expSet = {} )
+          #foreach( $entry in $ctx.args.entrySet() && !$util.isNullOrEmpty($entry.value))
+            #if( $entry.key != "id" )
+              $!{expSet.put("#${entry.key}", ":${entry.key}")}
+              $!{expNames.put("#${entry.key}", "$entry.key")}
+              $!{expValues.put(":${entry.key}", { "S" : "${entry.value}" })}
+            #end
+          #end
+          #set( $expression = "" )
+          #if( !${expSet.isEmpty()} )
+            #set( $expression = "SET" )
+            #foreach( $entry in $expSet.entrySet() )
+              #set( $expression = "${expression} ${entry.key} = ${entry.value}" )
+              #if ( $foreach.hasNext )
+                #set( $expression = "${expression}," )
+              #end
+            #end
+          #end
+          "update" : {
+            "expression" : "${expression}"
+            #if( !${expNames.isEmpty()} )
+                ,"expressionNames" : $util.toJson($expNames)
+            #end
+            #if( !${expValues.isEmpty()} )
+                ,"expressionValues" : $util.toJson($expValues)
+            #end
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  DeleteTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: deleteTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "UpdateItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          },
+          "update" : {
+            "expression" : "SET #removed = :removed",
+            "expressionNames" : {
+              "#removed": "removed"
+            },
+            "expressionValues": {
+              ":removed": { "BOOL" : true}
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  AddTagTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TagTileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: addTagTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId())
+          },
+          "attributeValues": {
+            "tagID": $util.dynamodb.toDynamoDBJson($ctx.args.tagID),
+            "tileID": $util.dynamodb.toDynamoDBJson($ctx.args.tileID)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TagTileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  DeleteTagTileResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt TagTileDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: deleteTagTile
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "DeleteItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - TagTileDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  AddSessionResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt SessionDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: addSession
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId())
+          },
+          "attributeValues": {
+            "name": $util.dynamodb.toDynamoDBJson($ctx.args.name),
+            "location": $util.dynamodb.toDynamoDBJson($ctx.args.location),
+            "date": $util.dynamodb.toDynamoDBJson($ctx.args.date),
+            "ended": $util.dynamodb.toDynamoDBJson(false),
+            "owner": $util.dynamodb.toDynamoDBJson($ctx.args.owner)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - SessionDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  UpdateSessionResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt SessionDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: updateSession
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "UpdateItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          },
+          #set( $expNames  = {} )
+          #set( $expValues = {} )
+          #set( $expSet = {} )
+          #foreach( $entry in $ctx.args.entrySet() && !$util.isNullOrEmpty($entry.value) )
+            #if( $entry.key != "id" )
+              $!{expSet.put("#${entry.key}", ":${entry.key}")}
+              $!{expNames.put("#${entry.key}", "$entry.key")}
+              $!{expValues.put(":${entry.key}", { "S" : "${entry.value}" })}
+            #end
+          #end
+          #set( $expression = "" )
+          #if( !${expSet.isEmpty()} )
+            #set( $expression = "SET" )
+            #foreach( $entry in $expSet.entrySet() )
+              #set( $expression = "${expression} ${entry.key} = ${entry.value}" )
+              #if ( $foreach.hasNext )
+                #set( $expression = "${expression}," )
+              #end
+            #end
+          #end
+          "update" : {
+            "expression" : "${expression}"
+            #if( !${expNames.isEmpty()} )
+                ,"expressionNames" : $util.toJson($expNames)
+            #end
+            #if( !${expValues.isEmpty()} )
+                ,"expressionValues" : $util.toJson($expValues)
+            #end
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - SessionDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  EndSessionResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      TypeName: Mutation
+      DataSourceName: !GetAtt SessionDataSource.Name
+      ApiId: !GetAtt AppSyncApi.ApiId
+      FieldName: endSession
+      RequestMappingTemplate: |
+        {
+          "version": "2018-05-29",
+          "operation": "UpdateItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          },
+          "update" : {
+            "expression" : "SET #ended = :ended",
+            "expressionNames" : {
+              "#ended": "ended"
+            },
+            "expressionValues": {
+              ":ended": { "BOOL" : true}
+            }
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+    DependsOn:
+      - SessionDataSource
+      - AppSyncApi
+      - AppSyncSchema
+  ReactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      WebsiteConfiguration:
+        ErrorDocument: index.html
+        IndexDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: False
+        BlockPublicPolicy: False
+        IgnorePublicAcls: False
+        RestrictPublicBuckets: False
+  ReactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ReactBucket
+      PolicyDocument: !Sub
+        - |
+          {
+              "Version": "2012-10-17",
+              "Id": "Policy1539591436123",
+              "Statement": [
+                  {
+                      "Sid": "Stmt1539591434428",
+                      "Effect": "Allow",
+                      "Principal": "*",
+                      "Action": "s3:GetObject",
+                      "Resource": "arn:aws:s3:::${bucket}/*"
+                  }
+              ]
+          }
+        - { bucket: !Ref ReactBucket}
+    DependsOn:
+      - ReactBucket
+Outputs:
+  AppSyncGraphQLEndPoint:
+    Description: GraphQL endpoint for the AppSync service
+    Value: !GetAtt AppSyncApi.GraphQLUrl
+  Region:
+    Description: Deployment region
+    Value: eu-central-1
+  IdentityPoolId:
+    Description: Id of the identity pool
+    Value: !Ref IdentityPool
+  UserPoolId:
+    Description: Id of the user pool
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Id of the user pool client
+    Value: !Ref UserPoolClient
+  ImageBucket:
+    Description: Name of the image bucket
+    Value: !Ref ImageBucket
+  ReactBucket:
+    Description: Name of the frontend bucket
+    Value: !Ref ReactBucket

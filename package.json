@@ -1,0 +1,46 @@
+{
+  "name": "faros-resumebuilder",
+  "version": "1.0.0-alpha",
+  "private": true,
+  "dependencies": {
+    "apollo-client": "^2.5.1",
+    "aws-amplify": "^1.1.22",
+    "aws-amplify-react": "^2.3.2",
+    "aws-appsync": "^1.7.1",
+    "aws-appsync-react": "^1.2.6",
+    "buffer": "^4.x",
+    "env-cmd": "^8.0.2",
+    "graphql": "^14.1.1",
+    "graphql-tag": "^2.10.1",
+    "informed": "^2.1.7",
+    "jquery": "^3.3.1",
+    "popper.js": "^1.14.7",
+    "prop-types": "^15.7.2",
+    "react": "^16.8.4",
+    "react-apollo": "^2.5.2",
+    "react-bootstrap": "^1.0.0-beta.5",
+    "react-dom": "^16.8.4",
+    "react-icons": "^3.5.0",
+    "react-responsive": "^6.1.1",
+    "react-router-dom": "^4.3.1",
+    "react-scripts": "^2.1.8",
+    "react-spinners": "^0.5.3",
+    "react-youtube": "^7.9.0",
+    "uuid": "^3.3.2",
+    "validator": "^10.11.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "start-prd": "env-cmd ./.env.production react-scripts start",
+    "build": "react-scripts build",
+    "build-dev": "env-cmd ./.env.development react-scripts build",
+    "test": "react-scripts test --env=jsdom",
+    "eject": "react-scripts eject"
+  },
+  "browserslist": [
+    ">0.2%",
+    "not dead",
+    "not ie <= 11",
+    "not op_mini all"
+  ]
+}
