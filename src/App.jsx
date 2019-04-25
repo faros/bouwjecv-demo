@@ -11,6 +11,7 @@ import {ApolloProvider} from "react-apollo";
 import {Rehydrated} from "aws-appsync-react";
 import './stylesheet.css';
 import AdminSwitch from "./Admin/AdminSwitch";
+import ResumeMonitor from "./Monitor/ResumeMonitor";
 
 // window.LOG_LEVEL = 'DEBUG';
 
@@ -51,6 +52,7 @@ class App extends Component {
                 <Route exact path={'/session/:id'} component={SessionResolver}/>
                 <Route path={'/resume'} render={() => <ResumeBuilder sessionID={Cache.getSessionID()}/>}/>
                 <Route path={'/admin'} component={AdminSwitch}/>
+                <Route path={'/monitor'} exact render={() => <ResumeMonitor sessionID={Cache.getSessionID()}/>}/>
                 <Route path={'/'} render={() => <Redirect to={'/resume/start'}/>}/>
             </Switch>
         );

@@ -1747,3 +1747,8 @@ h4.h-allrestags {
 .export input[type=checkbox] {
     margin-right: .3em;
 }
+
+
+main.monitor h1 {
+    color: unset
+}
